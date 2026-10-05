@@ -7,6 +7,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -79,6 +85,30 @@ abstract class LotoDatabase : RoomDatabase() {
 private data class Draw(val date: LocalDate, val numbers: List<Int>)
 private const val MODEL_TYPE_RECENCY = "RECENCY"
  
+private fun numberBallColor(number: Int): Color = when (number) {
+    in 1..9 -> Color(0xFF4CAF50)
+    in 10..19 -> Color(0xFF2196F3)
+    in 20..29 -> Color(0xFFFF9800)
+    else -> Color(0xFFE53935)
+}
+
+@Composable
+private fun NumberBall(number: Int, size: androidx.compose.ui.unit.Dp = 44.dp) {
+    Box(
+        modifier = Modifier.size(size).background(numberBallColor(number), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("%02d".format(number), color = Color.White, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun NumberBalls(numbers: List<Int>, size: androidx.compose.ui.unit.Dp = 44.dp) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        numbers.sorted().forEach { NumberBall(it, size) }
+    }
+}
+
 private data class Evaluation(
     val modelName: String, val cases: Int, val averageMatches: Double,
     val hit1Rate: Double, val hit2Rate: Double, val hit3Rate: Double,
@@ -310,10 +340,11 @@ private fun PredictorScreen(db: LotoDatabase) {
                     }
                     Text("予測数字", style = MaterialTheme.typography.titleLarge)
                     predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
-                        Text(
-                            "${index + 1}口目  " + numbers.joinToString("  ") { "%02d".format(it) },
-                            style = if (index == 0) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("${index + 1}口目", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.width(8.dp))
+                            NumberBalls(numbers, if (index == 0) 48.dp else 42.dp)
+                        }
                     }
                     Text("各口は同じ7数字セットにならないように候補を分散しています。")
                     predictionEvaluation?.let { e ->
@@ -336,7 +367,11 @@ private fun PredictorScreen(db: LotoDatabase) {
                         }
                     }
                     Text("数字別スコア", style = MaterialTheme.typography.titleMedium)
-                    prediction.forEach { n -> Text("%02d  %.4f".format(n, scores[n] ?: 0.0)) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        prediction.sorted().forEach { n -> NumberBall(n) }
+                    }
+                    Text("数字別スコア", style = MaterialTheme.typography.titleMedium)
+                    prediction.sorted().forEach { n -> Text("%02d  %.4f".format(n, scores[n] ?: 0.0)) }
                 }
 
 
