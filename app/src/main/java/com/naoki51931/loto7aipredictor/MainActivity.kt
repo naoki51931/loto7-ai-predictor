@@ -338,6 +338,12 @@ private fun PredictorScreen(db: LotoDatabase) {
                             }
                         }
                     }
+                    draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
+                        Text("当選数字", style = MaterialTheme.typography.titleLarge)
+                        NumberBalls(actual.numbers, 48.dp)
+                        Text("※本数字7個。ボーナス数字は含めていません。", style = MaterialTheme.typography.bodySmall)
+                    }
+
                     Text("予測数字", style = MaterialTheme.typography.titleLarge)
                     predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -412,9 +418,14 @@ private fun PredictorScreen(db: LotoDatabase) {
                 Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(draws.reversed()) { Text("${it.date}: ${it.numbers.joinToString(", ")}") }
+                    items(draws.reversed()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(it.date.toString(), style = MaterialTheme.typography.titleSmall)
+                            NumberBalls(it.numbers, 38.dp)
+                        }
+                    }
                 }
             }
         }
