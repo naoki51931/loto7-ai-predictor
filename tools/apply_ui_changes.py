@@ -9,6 +9,8 @@ if 'import java.time.DayOfWeek' not in s:
     s = s.replace('import java.time.LocalDate\n', 'import java.time.LocalDate\nimport java.time.DayOfWeek\nimport java.time.temporal.TemporalAdjusters\n', 1)
 if 'import kotlin.math.abs' not in s:
     s = s.replace('import kotlin.math.exp\n', 'import kotlin.math.exp\nimport kotlin.math.abs\n', 1)
+if 'import kotlinx.coroutines.Dispatchers' not in s:
+    s = s.replace('import kotlinx.coroutines.launch\n', 'import kotlinx.coroutines.launch\nimport kotlinx.coroutines.Dispatchers\nimport kotlinx.coroutines.withContext\nimport kotlinx.coroutines.withTimeoutOrNull\n', 1)
 
 s = s.replace('Modifier.fillMaxSize().padding(padding).padding(16.dp),', 'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),', 1)
 state = '    var predictionEvaluation by remember { mutableStateOf<Evaluation?>(null) }\n'
@@ -36,6 +38,43 @@ display = '''                    Column(verticalArrangement = Arrangement.spaced
                     }
 '''
 s = s[:a] + display + s[b:]
+
+# Replace training button block so expensive tuning runs off the UI thread and is visibly loading.
+button_start = s.find('                    Button(\n                        enabled = !training && modelName.isNotBlank() && draws.size >= 3,')
+button_end = s.find('\n\n                    Button(onClick = {', button_start)
+if button_start < 0 or button_end < 0: raise SystemExit('training button block not found')
+button = '''                    Button(
+                        enabled = !training && modelName.isNotBlank() && draws.size >= 3,
+                        onClick = {
+                            training = true
+                            message = "学習中です。最大5分かかります。アプリを閉じずにお待ちください。"
+                            val requestedName = modelName.trim()
+                            scope.launch {
+                                val trained = withTimeoutOrNull(5 * 60 * 1000L) {
+                                    withContext(Dispatchers.Default) { trainModel(requestedName, draws) }
+                                }
+                                if (trained != null) {
+                                    db.modelDao().deactivateAll()
+                                    db.modelDao().insert(trained.copy(active = true))
+                                    models = db.modelDao().all()
+                                    selectedModel = db.modelDao().active()
+                                    modelName = ""
+                                    message = "モデル「${trained.name}」を学習・保存しました"
+                                } else {
+                                    message = "5分の学習時間に達したため終了しました。もう一度学習すると再試行できます。"
+                                }
+                                training = false
+                            }
+                        }
+                    ) { Text(if (training) "学習中..." else "学習して保存") }
+                    if (training) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text("AIモデルを学習中… 最大5分", style = MaterialTheme.typography.titleMedium)
+                            Text("処理は継続中です。クラッシュではありません。画面を閉じずにお待ちください。", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }'''
+s = s[:button_start] + button + s[button_end:]
 
 start = s.find('private fun generateCandidatesFromScores('); end = s.find('\nprivate fun calculateMultiTicketRate(', start)
 if start < 0 or end < 0: raise SystemExit('candidate generator block not found')
@@ -89,52 +128,41 @@ if ts < 0 or te < 0: raise SystemExit('training block not found')
 training = '''private fun trainModel(name: String, draws: List<Draw>): SavedModelEntity {
     val sorted = draws.sortedBy { it.date }
     if (sorted.size < 20) return SavedModelEntity(name = name, modelType = MODEL_TYPE_RECENCY, lambda = 0.08, recencyBonusWeight = 0.5, trainedAt = LocalDate.now().toString(), active = false)
-
-    // Chronological holdout: older 80% is used for parameter selection; newest 20% is never used for tuning.
     val splitIndex = (sorted.size * 0.80).toInt().coerceIn(10, sorted.size - 1)
     val trainingDraws = sorted.take(splitIndex)
     val validationDraws = sorted.drop(splitIndex)
     var bestLambda = 0.08
     var bestRecency = 0.5
     var bestTrainAverage = Double.NEGATIVE_INFINITY
-
-    // Stage 1: tune only on the training partition.
     for (iteration in 0 until 400) {
+        if (Thread.currentThread().isInterrupted) break
         val lambda = 0.005 + (iteration % 40) * 0.0125
         val recency = 0.10 + ((iteration / 40) % 10) * 0.10
-        var total = 0.0
-        var cases = 0
+        var total = 0.0; var cases = 0
         for (i in 1 until trainingDraws.size) {
+            if (Thread.currentThread().isInterrupted) break
             val target = trainingDraws[i]
             val window = trainingDraws.take(i).takeLast(52)
             if (window.isEmpty()) continue
             val predicted = scoreNumbers(window, lambda, recency).entries.sortedByDescending { it.value }.take(7).map { it.key }.toSet()
-            total += predicted.intersect(target.numbers.toSet()).size
-            cases++
+            total += predicted.intersect(target.numbers.toSet()).size; cases++
         }
         val average = if (cases == 0) 0.0 else total / cases
         if (average > bestTrainAverage) { bestTrainAverage = average; bestLambda = lambda; bestRecency = recency }
     }
-
-    // Stage 2: genuine walk-forward holdout check. Parameters are frozen here.
-    var validationTotal = 0.0
-    var validationCases = 0
-    var validationSevenHits = 0
+    var validationTotal = 0.0; var validationCases = 0; var validationSevenHits = 0
     for (offset in validationDraws.indices) {
+        if (Thread.currentThread().isInterrupted) break
         val targetIndex = splitIndex + offset
         val target = sorted[targetIndex]
         val window = sorted.take(targetIndex).takeLast(52)
         if (window.isEmpty()) continue
         val predicted = scoreNumbers(window, bestLambda, bestRecency).entries.sortedByDescending { it.value }.take(7).map { it.key }.toSet()
         val matches = predicted.intersect(target.numbers.toSet()).size
-        validationTotal += matches
-        validationCases++
-        if (matches == 7) validationSevenHits++
+        validationTotal += matches; validationCases++; if (matches == 7) validationSevenHits++
     }
     val validationAverage = if (validationCases == 0) 0.0 else validationTotal / validationCases
-    // Keep the holdout metrics visible in logcat without feeding them back into tuning.
     println("Holdout validation: cases=$validationCases average=$validationAverage sevenHits=$validationSevenHits")
-
     return SavedModelEntity(name = name, modelType = MODEL_TYPE_RECENCY, lambda = bestLambda, recencyBonusWeight = bestRecency, trainedAt = LocalDate.now().toString(), active = false)
 }
 '''
@@ -152,4 +180,4 @@ section = '''                Text("登録済みデータ", style = MaterialTheme
                 if (visibleDrawCount > 100) TextButton(onClick = { visibleDrawCount = 100 }) { Text("100件表示に戻す") }'''
 s = s[:rs] + section + s[le + len('\n                }'):]
 p.write_text(s, encoding='utf-8')
-print('Applied chronological 80/20 holdout model training and validation')
+print('Applied five-minute background training with visible loading state')
