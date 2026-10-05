@@ -9,6 +9,8 @@ if 'import androidx.compose.foundation.rememberScrollState' not in s:
         'import androidx.compose.foundation.layout.*\nimport androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.verticalScroll\n',
         1,
     )
+if 'import java.time.DayOfWeek' not in s:
+    s = s.replace('import java.time.LocalDate\n', 'import java.time.LocalDate\nimport java.time.DayOfWeek\nimport java.time.temporal.TemporalAdjusters\n', 1)
 
 s = s.replace(
     'Modifier.fillMaxSize().padding(padding).padding(16.dp),',
@@ -31,22 +33,19 @@ if a < 0 or b < 0:
 
 display = '''                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         val targetForDisplay = runCatching { LocalDate.parse(targetDate) }.getOrNull()
-                        val exactActual = draws.firstOrNull { it.date.toString() == targetDate }
-                        val actualForDisplay = exactActual ?: draws
-                            .filter { targetForDisplay == null || it.date < targetForDisplay }
-                            .maxByOrNull { it.date }
-                        if (actualForDisplay != null) {
-                            Text(
-                                if (exactActual != null) "当選数字 ${actualForDisplay.date}"
-                                else "直近の当選数字 ${actualForDisplay.date}",
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                            NumberBalls(actualForDisplay.numbers, 40.dp)
-                            if (exactActual == null) {
-                                Text("※予測対象日の当選結果が未登録のため、直近回を表示しています。", style = MaterialTheme.typography.bodySmall)
+                        val fridayForDisplay = targetForDisplay?.with(TemporalAdjusters.nextOrSame(DayOfWeek.FRIDAY))
+                        val actualForDisplay = fridayForDisplay?.let { friday ->
+                            draws.firstOrNull { it.date == friday }
+                        }
+                        if (fridayForDisplay != null) {
+                            Text("当選数字 ${fridayForDisplay}", style = MaterialTheme.typography.titleLarge)
+                            if (actualForDisplay != null) {
+                                NumberBalls(actualForDisplay.numbers, 40.dp)
+                            } else {
+                                Text("この週の金曜日の当選結果はまだ登録されていません。", style = MaterialTheme.typography.bodyMedium)
                             }
                         } else {
-                            Text("当選数字：登録データなし", style = MaterialTheme.typography.titleLarge)
+                            Text("当選数字：予測対象日を確認してください", style = MaterialTheme.typography.titleLarge)
                         }
 
                         Text("予測数字 ${selectedTicketCount}口", style = MaterialTheme.typography.titleLarge)
@@ -117,4 +116,4 @@ section = '''                Text("登録済みデータ", style = MaterialTheme
 
 s = s[:rs] + section + s[le + len('\n                }'):]
 p.write_text(s, encoding='utf-8')
-print('Applied winning-number display above predictions, five-ticket generation, scrolling, and 100-item paging')
+print('Applied Friday winning-number display above predictions, five-ticket generation, scrolling, and 100-item paging')
