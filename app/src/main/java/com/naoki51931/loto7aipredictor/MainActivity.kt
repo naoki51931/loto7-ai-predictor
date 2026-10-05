@@ -84,6 +84,7 @@ private data class Evaluation(
     val hit1Rate: Double, val hit2Rate: Double, val hit3Rate: Double,
     val hit4Rate: Double, val hit5Rate: Double, val hit6Rate: Double,
     val hit7Rate: Double,
+    val multiTicketRates: List<Double>,
     val olderAverage: Double, val recentAverage: Double
 )
 
@@ -96,18 +97,26 @@ private fun evaluateModel(model: SavedModelEntity, draws: List<Draw>): Evaluatio
             it.date >= target.date.minusDays(14) && it.date < target.date
         }
         if (window.isEmpty()) continue
-        val predicted = scoreNumbers(window, model.lambda, model.recencyBonusWeight)
-            .entries.sortedByDescending { it.value }.take(7).map { it.key }.toSet()
-        results += predicted.intersect(target.numbers.toSet()).size
+        val candidates = generateCandidates(window, model)
+        results += candidates.first().intersect(target.numbers.toSet()).size
     }
-    if (results.isEmpty()) return Evaluation(model.name, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    if (results.isEmpty()) return Evaluation(
+        model.name, 0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        List(5) { 0.0 },
+        0.0, 0.0
+    )
     val mid = (results.size / 2).coerceAtLeast(1)
     val older = results.take(mid)
     val recent = results.drop(mid).ifEmpty { older }
     fun rate(min: Int) = results.count { it >= min }.toDouble() / results.size * 100.0
+    val multiTicketRates = (1..5).map { ticketCount ->
+        calculateMultiTicketRate(model, draws, 4, ticketCount)
+    }
     return Evaluation(
         model.name, results.size, results.average(),
         rate(1), rate(2), rate(3), rate(4), rate(5), rate(6), rate(7),
+        multiTicketRates,
         older.average(), recent.average()
     )
 }
@@ -131,7 +140,10 @@ private fun PredictorScreen(db: LotoDatabase) {
     var models by remember { mutableStateOf(listOf<SavedModelEntity>()) }
     var selectedModel by remember { mutableStateOf<SavedModelEntity?>(null) }
     var prediction by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var predictionCandidates by remember { mutableStateOf<List<List<Int>>>(emptyList()) }
     var scores by remember { mutableStateOf<Map<Int, Double>>(emptyMap()) }
+    var selectedMinMatches by remember { mutableStateOf(4) }
+    var selectedTicketCount by remember { mutableStateOf(1) }
     var message by remember { mutableStateOf("抽選データを追加してください") }
     var training by remember { mutableStateOf(false) }
     var predictionEvaluation by remember { mutableStateOf<Evaluation?>(null) }
@@ -252,8 +264,9 @@ private fun PredictorScreen(db: LotoDatabase) {
                                     it.date >= target.minusDays(14) && it.date < target
                                 }
                                 val model = selectedModel!!
-                                val result = predict(recent, model)
-                                prediction = result.first
+                                val result = predictCandidates(recent, model)
+                                predictionCandidates = result.first
+                                prediction = result.first.firstOrNull() ?: emptyList()
                                 scores = result.second
                                 predictionEvaluation = evaluateModel(model, draws)
                                 message = "モデル「${model.name}」 / 使用データ: ${recent.size}回 / ${target.minusDays(14)}〜${target.minusDays(1)}"
@@ -264,19 +277,62 @@ private fun PredictorScreen(db: LotoDatabase) {
 
                 Text(message)
                 if (prediction.isNotEmpty()) {
+                    Text("購入条件", style = MaterialTheme.typography.titleLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        var matchExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedButton(onClick = { matchExpanded = true }) {
+                                Text("${selectedMinMatches}個以上一致")
+                            }
+                            DropdownMenu(expanded = matchExpanded, onDismissRequest = { matchExpanded = false }) {
+                                (1..7).forEach { value ->
+                                    DropdownMenuItem(
+                                        text = { Text(if (value == 7) "7個一致" else "${value}個以上一致") },
+                                        onClick = { selectedMinMatches = value; matchExpanded = false }
+                                    )
+                                }
+                            }
+                        }
+                        var ticketExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedButton(onClick = { ticketExpanded = true }) {
+                                Text("${selectedTicketCount}口購入")
+                            }
+                            DropdownMenu(expanded = ticketExpanded, onDismissRequest = { ticketExpanded = false }) {
+                                (1..5).forEach { value ->
+                                    DropdownMenuItem(
+                                        text = { Text("${value}口") },
+                                        onClick = { selectedTicketCount = value; ticketExpanded = false }
+                                    )
+                                }
+                            }
+                        }
+                    }
                     Text("予測数字", style = MaterialTheme.typography.titleLarge)
-                    Text(prediction.joinToString("  ") { "%02d".format(it) }, style = MaterialTheme.typography.headlineSmall)
-                    Text("選択中のモデルの学習済みパラメータでスコアリングしています。")
+                    predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
+                        Text(
+                            "${index + 1}口目  " + numbers.joinToString("  ") { "%02d".format(it) },
+                            style = if (index == 0) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    Text("各口は同じ7数字セットにならないように候補を分散しています。")
                     predictionEvaluation?.let { e ->
                         if (e.cases > 0) {
-                            Text("過去バックテストからの推定", style = MaterialTheme.typography.titleMedium)
-                            Text("この7個を1口買った場合の推定当選率: " + "%.2f".format(e.hit4Rate) + "%（4個以上一致）")
-                            Text("参考: 3個以上 " + "%.2f".format(e.hit3Rate) + "% / " +
-                                "5個以上 " + "%.2f".format(e.hit5Rate) + "% / " +
-                                "6個以上 " + "%.2f".format(e.hit6Rate) + "% / " +
-                                "7個一致 " + "%.2f".format(e.hit7Rate) + "%")
-                            Text("バックテスト " + e.cases + "回 / 平均一致 " + "%.2f".format(e.averageMatches) + "個")
-                            Text("※これは未来の当選を保証する確率ではなく、過去データで同じ予測方法を使った場合の実績率です。")
+                            val selectedRate = calculateMultiTicketRate(selectedModel!!, draws, selectedMinMatches, selectedTicketCount)
+                            Text("推定当選率", style = MaterialTheme.typography.titleLarge)
+                            Text("%.2f%%".format(selectedRate), style = MaterialTheme.typography.displayLarge)
+                            Text(
+                                "少なくとも1口が" +
+                                    if (selectedMinMatches == 7) "7個一致" else "${selectedMinMatches}個以上一致",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text("1口〜5口の推定率", style = MaterialTheme.typography.titleMedium)
+                            (1..5).forEach { count ->
+                                val rate = calculateMultiTicketRate(selectedModel!!, draws, selectedMinMatches, count)
+                                Text("${count}口: %.2f%%".format(rate))
+                            }
+                            Text("バックテスト ${e.cases}回 / 平均一致 %.2f個".format(e.averageMatches))
+                            Text("※過去データで同じ複数口予測を行った場合の実績率です。将来の当選を保証するものではありません。")
                         }
                     }
                     Text("数字別スコア", style = MaterialTheme.typography.titleMedium)
@@ -363,11 +419,58 @@ private fun trainModel(name: String, draws: List<Draw>): SavedModelEntity {
     )
 }
 
-private fun predict(draws: List<Draw>, model: SavedModelEntity): Pair<List<Int>, Map<Int, Double>> {
-    if (draws.isEmpty()) return emptyList<Int>() to emptyMap()
+private fun predictCandidates(draws: List<Draw>, model: SavedModelEntity): Pair<List<List<Int>>, Map<Int, Double>> {
+    if (draws.isEmpty()) return emptyList<List<Int>>() to emptyMap()
     val scores = scoreNumbers(draws, model.lambda, model.recencyBonusWeight)
-    val selected = scores.entries.sortedByDescending { it.value }.take(7).map { it.key }.sorted()
-    return selected to scores
+    return generateCandidatesFromScores(scores, 5) to scores
+}
+
+private fun generateCandidates(draws: List<Draw>, model: SavedModelEntity): List<List<Int>> =
+    if (draws.isEmpty()) emptyList()
+    else generateCandidatesFromScores(scoreNumbers(draws, model.lambda, model.recencyBonusWeight), 5)
+
+private fun generateCandidatesFromScores(scores: Map<Int, Double>, count: Int): List<List<Int>> {
+    val base = scores.entries.sortedByDescending { it.value }
+    if (base.size < 7) return emptyList()
+    val maxScore = base.first().value.coerceAtLeast(1.0)
+    val chosenSets = mutableListOf<List<Int>>()
+    repeat(count.coerceIn(1, 5)) {
+        val selected = mutableListOf<Int>()
+        for (entry in base) {
+            if (selected.size >= 7) break
+            val overlap = chosenSets.count { entry.key in it }
+            val adjusted = entry.value - overlap * maxScore * 0.18
+            if (selected.isEmpty() || adjusted >= base[6].value - maxScore * 0.40) selected += entry.key
+        }
+        if (selected.size < 7) {
+            base.filter { it.key !in selected }.take(7 - selected.size).forEach { selected += it.key }
+        }
+        val candidate = selected.take(7).sorted()
+        if (candidate !in chosenSets) chosenSets += candidate
+    }
+    return chosenSets
+}
+
+private fun calculateMultiTicketRate(
+    model: SavedModelEntity,
+    draws: List<Draw>,
+    minMatches: Int,
+    ticketCount: Int
+): Double {
+    val sorted = draws.sortedBy { it.date }
+    var cases = 0
+    var success = 0
+    for (i in 1 until sorted.size) {
+        val target = sorted[i]
+        val window = sorted.filter {
+            it.date >= target.date.minusDays(14) && it.date < target.date
+        }
+        if (window.isEmpty()) continue
+        val candidates = generateCandidates(window, model).take(ticketCount.coerceIn(1, 5))
+        if (candidates.any { it.intersect(target.numbers.toSet()).size >= minMatches.coerceIn(1, 7) }) success++
+        cases++
+    }
+    return if (cases == 0) 0.0 else success.toDouble() / cases * 100.0
 }
 
 private fun scoreNumbers(draws: List<Draw>, lambda: Double, recencyBonusWeight: Double): Map<Int, Double> {
