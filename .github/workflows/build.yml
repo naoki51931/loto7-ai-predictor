@@ -34,7 +34,9 @@ jobs:
           python3 tools/prepare_history.py
 
       - name: Apply requested UI changes
-        run: python3 tools/apply_ui_changes.py
+        run: |
+          python3 tools/apply_ui_changes.py
+          python3 tools/fix_nn_generated.py
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
