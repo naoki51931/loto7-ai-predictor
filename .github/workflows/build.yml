@@ -59,6 +59,28 @@ jobs:
           print(f'Bundled {len(rows)} Loto7 draws, rounds {rows[0][0]}-{rows[-1][0]}')
           PY
 
+      - name: Enable full-screen vertical scrolling
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+          if 'import androidx.compose.foundation.rememberScrollState' not in s:
+              s = s.replace(
+                  'import androidx.compose.foundation.layout.*\n',
+                  'import androidx.compose.foundation.layout.*\nimport androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.verticalScroll\n'
+              )
+          s = s.replace(
+              'Modifier.fillMaxSize().padding(padding).padding(16.dp),',
+              'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),'
+          )
+          s = s.replace(
+              'modifier = Modifier.fillMaxWidth().weight(1f),',
+              'modifier = Modifier.fillMaxWidth().height(400.dp),'
+          )
+          p.write_text(s, encoding='utf-8')
+          PY
+
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
 
