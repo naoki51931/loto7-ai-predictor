@@ -50,17 +50,25 @@ generator = '''private fun generateCandidatesFromScores(scores: Map<Int, Double>
     for (ticket in 0 until wanted) {
         val anchor = ranked[(ticket * 3) % minOf(15, ranked.size)]
         val candidate = mutableListOf(anchor)
-        // Prefer nearby numbers so realistic clusters such as 1,2,5 can appear.
-        val clusterOrder = ranked.sortedBy { n ->
-            val distance = abs(n - anchor)
-            distance * 0.70 - (scores[n] ?: 0.0) * 0.30
+        val nearby = ranked.filter { it != anchor && abs(it - anchor) <= 5 }
+            .sortedBy { n -> abs(n - anchor) * 0.70 - (scores[n] ?: 0.0) * 0.30 }
+
+        // Usually make a two-number cluster. Every fifth ticket makes a three-number cluster.
+        // With five displayed tickets this gives four pair-oriented tickets and one triple-oriented ticket.
+        val clusterSize = if (ticket % 5 == 4) 3 else 2
+        for (n in nearby) {
+            if (candidate.size >= clusterSize) break
+            if (n !in candidate) candidate += n
         }
-        for (n in clusterOrder) {
-            if (candidate.size >= 3) break
-            if (n !in candidate && abs(n - anchor) <= 5) candidate += n
-        }
-        // Fill the rest from high-scoring numbers while preserving some spread.
+
+        // Fill remaining positions from the strongest numbers, avoiding another tight run.
         for (n in ranked.drop(ticket)) {
+            if (candidate.size >= 7) break
+            if (n in candidate) continue
+            val wouldExtendCluster = candidate.count { abs(it - n) <= 2 } >= 2
+            if (!wouldExtendCluster || candidate.size >= 6) candidate += n
+        }
+        for (n in ranked) {
             if (candidate.size >= 7) break
             if (n !in candidate) candidate += n
         }
@@ -71,16 +79,13 @@ generator = '''private fun generateCandidatesFromScores(scores: Map<Int, Double>
 '''
 s = s[:start] + generator + s[end:]
 
-# Add adjacency/co-occurrence and local-neighbour evidence to each number's score.
 old = '''        scores[n] = score + recencyBonus * recencyBonusWeight
 '''
 new = '''        val recentWindow = sorted.takeLast(52)
         var neighborHits = 0.0
         var pairStrength = 0.0
         for (draw in recentWindow) {
-            if (n in draw.numbers) {
-                neighborHits += draw.numbers.count { other -> other != n && abs(other - n) <= 4 }
-            }
+            if (n in draw.numbers) neighborHits += draw.numbers.count { other -> other != n && abs(other - n) <= 4 }
             pairStrength += draw.numbers.count { other -> abs(other - n) <= 2 }.toDouble() * 0.02
         }
         val clusterBonus = if (recentWindow.isEmpty()) 0.0 else neighborHits / recentWindow.size * 0.22
@@ -103,4 +108,4 @@ section = '''                Text("登録済みデータ", style = MaterialTheme
                 if (visibleDrawCount > 100) TextButton(onClick = { visibleDrawCount = 100 }) { Text("100件表示に戻す") }'''
 s = s[:rs] + section + s[le + len('\n                }'):]
 p.write_text(s, encoding='utf-8')
-print('Applied Friday display and cluster-aware prediction model')
+print('Applied pair-first and occasional-triple prediction model')
