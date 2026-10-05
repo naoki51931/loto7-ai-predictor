@@ -30,10 +30,25 @@ if a < 0 or b < 0:
     raise SystemExit('prediction display block not found')
 
 display = '''                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
-                            Text("当選数字", style = MaterialTheme.typography.titleLarge)
-                            NumberBalls(actual.numbers, 40.dp)
+                        val targetForDisplay = runCatching { LocalDate.parse(targetDate) }.getOrNull()
+                        val exactActual = draws.firstOrNull { it.date.toString() == targetDate }
+                        val actualForDisplay = exactActual ?: draws
+                            .filter { targetForDisplay == null || it.date < targetForDisplay }
+                            .maxByOrNull { it.date }
+                        if (actualForDisplay != null) {
+                            Text(
+                                if (exactActual != null) "当選数字 ${actualForDisplay.date}"
+                                else "直近の当選数字 ${actualForDisplay.date}",
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                            NumberBalls(actualForDisplay.numbers, 40.dp)
+                            if (exactActual == null) {
+                                Text("※予測対象日の当選結果が未登録のため、直近回を表示しています。", style = MaterialTheme.typography.bodySmall)
+                            }
+                        } else {
+                            Text("当選数字：登録データなし", style = MaterialTheme.typography.titleLarge)
                         }
+
                         Text("予測数字 ${selectedTicketCount}口", style = MaterialTheme.typography.titleLarge)
                         predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
                             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -102,4 +117,4 @@ section = '''                Text("登録済みデータ", style = MaterialTheme
 
 s = s[:rs] + section + s[le + len('\n                }'):]
 p.write_text(s, encoding='utf-8')
-print('Applied vertical prediction display, five-ticket generation, scrolling, and 100-item paging')
+print('Applied winning-number display above predictions, five-ticket generation, scrolling, and 100-item paging')
