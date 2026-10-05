@@ -78,6 +78,39 @@ abstract class LotoDatabase : RoomDatabase() {
 
 private data class Draw(val date: LocalDate, val numbers: List<Int>)
 private const val MODEL_TYPE_RECENCY = "RECENCY"
+ 
+private data class Evaluation(
+    val modelName: String, val cases: Int, val averageMatches: Double,
+    val hit2Rate: Double, val hit3Rate: Double, val hit4Rate: Double,
+    val hit5Rate: Double, val hit6Rate: Double, val hit7Rate: Double,
+    val olderAverage: Double, val recentAverage: Double
+)
+
+private fun evaluateModel(model: SavedModelEntity, draws: List<Draw>): Evaluation {
+    val sorted = draws.sortedBy { it.date }
+    val results = mutableListOf<Int>()
+    for (i in 1 until sorted.size) {
+        val target = sorted[i]
+        val window = sorted.filter {
+            it.date >= target.date.minusDays(14) && it.date < target.date
+        }
+        if (window.isEmpty()) continue
+        val predicted = scoreNumbers(window, model.lambda, model.recencyBonusWeight)
+            .entries.sortedByDescending { it.value }.take(7).map { it.key }.toSet()
+        results += predicted.intersect(target.numbers.toSet()).size
+    }
+    if (results.isEmpty()) return Evaluation(model.name, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    val mid = (results.size / 2).coerceAtLeast(1)
+    val older = results.take(mid)
+    val recent = results.drop(mid).ifEmpty { older }
+    fun rate(min: Int) = results.count { it >= min }.toDouble() / results.size * 100.0
+    return Evaluation(
+        model.name, results.size, results.average(),
+        rate(2), rate(3), rate(4), rate(5), rate(6), rate(7),
+        older.average(), recent.average()
+    )
+}
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -234,6 +267,40 @@ private fun PredictorScreen(db: LotoDatabase) {
                     Text("数字別スコア", style = MaterialTheme.typography.titleMedium)
                     prediction.forEach { n -> Text("%02d  %.4f".format(n, scores[n] ?: 0.0)) }
                 }
+
+
+                Text("モデル別バックテスト", style = MaterialTheme.typography.titleLarge)
+                if (models.isNotEmpty()) {
+                    models.forEach { model ->
+                        var evaluation by remember(model.id) { mutableStateOf<Evaluation?>(null) }
+                        OutlinedButton(onClick = {
+                            evaluation = evaluateModel(model, draws)
+                        }) {
+                            Text("「${model.name}」の正答率を計測")
+                        }
+                        evaluation?.let { e ->
+                            Text(
+                                "${e.modelName}: 平均一致 ${"%.2f".format(e.averageMatches)}個 / " +
+                                    "2個以上 ${"%.1f".format(e.hit2Rate)}% / " +
+                                    "3個以上 ${"%.1f".format(e.hit3Rate)}% / " +
+                                    "4個以上 ${"%.1f".format(e.hit4Rate)}%"
+                            )
+                            Text(
+                                "5個以上 ${"%.1f".format(e.hit5Rate)}% / " +
+                                    "6個以上 ${"%.1f".format(e.hit6Rate)}% / " +
+                                    "7個一致 ${"%.1f".format(e.hit7Rate)}%"
+                            )
+                            Text(
+                                "期間比較: 過去側 ${"%.2f".format(e.olderAverage)}個 → " +
+                                    "最近側 ${"%.2f".format(e.recentAverage)}個 " +
+                                    if (e.recentAverage > e.olderAverage) "（最近の方が高い）"
+                                    else if (e.recentAverage < e.olderAverage) "（過去の方が高い）"
+                                    else "（同じ）"
+                            )
+                        }
+                    }
+                }
+                Text("※「正答率」は7個全部一致だけでなく、2個以上〜7個一致率と平均一致数で評価します。")
 
                 Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
                 LazyColumn(
