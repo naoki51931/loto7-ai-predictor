@@ -36,21 +36,17 @@ jobs:
           python3 - <<'PY'
           import csv, json
           from pathlib import Path
-
           with open('/tmp/loto7.json', encoding='utf-8') as f:
               data = json.load(f)
-
           rows = []
           for d in data:
               nums = d.get('numbers', [])
               if len(nums) != 7 or len(set(nums)) != 7 or not all(1 <= int(n) <= 37 for n in nums):
                   continue
               rows.append([int(d['round']), d['date'], *map(int, nums)])
-
           rows.sort(key=lambda r: r[0])
           if len(rows) < 600:
               raise SystemExit(f'Incomplete Loto7 history: {len(rows)} rows')
-
           out = Path('app/src/main/assets/loto7.csv')
           with out.open('w', encoding='utf-8', newline='') as f:
               w = csv.writer(f)
@@ -66,18 +62,76 @@ jobs:
           p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
           s = p.read_text(encoding='utf-8')
           if 'import androidx.compose.foundation.rememberScrollState' not in s:
-              s = s.replace(
-                  'import androidx.compose.foundation.layout.*\n',
-                  'import androidx.compose.foundation.layout.*\nimport androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.verticalScroll\n'
-              )
-          s = s.replace(
-              'Modifier.fillMaxSize().padding(padding).padding(16.dp),',
-              'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),'
-          )
-          s = s.replace(
-              'modifier = Modifier.fillMaxWidth().weight(1f),',
-              'modifier = Modifier.fillMaxWidth().height(400.dp),'
-          )
+              s = s.replace('import androidx.compose.foundation.layout.*\n', 'import androidx.compose.foundation.layout.*\nimport androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.verticalScroll\n')
+          s = s.replace('Modifier.fillMaxSize().padding(padding).padding(16.dp),', 'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),')
+          s = s.replace('modifier = Modifier.fillMaxWidth().weight(1f),', 'modifier = Modifier.fillMaxWidth().height(400.dp),')
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Add AI versus random baseline
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+          marker = 'private data class Evaluation('
+          helper = '''private fun combination(n: Int, k: Int): Double {
+              if (k < 0 || k > n) return 0.0
+              val kk = minOf(k, n - k)
+              var result = 1.0
+              for (i in 1..kk) result = result * (n - kk + i) / i
+              return result
+          }
+
+          private fun randomExactRate(matches: Int): Double =
+              combination(7, matches) * combination(30, 7 - matches) / combination(37, 7) * 100.0
+
+          private fun randomAtLeastRate(minMatches: Int): Double =
+              (minMatches..7).sumOf { randomExactRate(it) }
+
+          private const val RANDOM_AVERAGE_MATCHES = 49.0 / 37.0
+
+          '''
+          if 'private fun randomAtLeastRate' not in s:
+              s = s.replace(marker, helper + marker)
+
+          needle = '''                            Text(
+                                "期間比較: 過去側 ${"%.2f".format(e.olderAverage)}個 → " +
+                                    "最近側 ${"%.2f".format(e.recentAverage)}個 " +
+                                    if (e.recentAverage > e.olderAverage) "（最近の方が高い）"
+                                    else if (e.recentAverage < e.olderAverage) "（過去の方が高い）"
+                                    else "（同じ）"
+                            )'''
+          replacement = needle + '''
+                            HorizontalDivider()
+                            Text("AI vs 完全ランダム", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "平均一致: AI ${"%.3f".format(e.averageMatches)}個 / " +
+                                    "ランダム ${"%.3f".format(RANDOM_AVERAGE_MATCHES)}個 / " +
+                                    "差 ${"%+.3f".format(e.averageMatches - RANDOM_AVERAGE_MATCHES)}個"
+                            )
+                            Text(
+                                "1個以上: AI ${"%.1f".format(e.hit1Rate)}% / ランダム ${"%.1f".format(randomAtLeastRate(1))}%"
+                            )
+                            Text(
+                                "2個以上: AI ${"%.1f".format(e.hit2Rate)}% / ランダム ${"%.1f".format(randomAtLeastRate(2))}%"
+                            )
+                            Text(
+                                "3個以上: AI ${"%.1f".format(e.hit3Rate)}% / ランダム ${"%.1f".format(randomAtLeastRate(3))}%"
+                            )
+                            Text(
+                                "4個以上: AI ${"%.2f".format(e.hit4Rate)}% / ランダム ${"%.2f".format(randomAtLeastRate(4))}%"
+                            )
+                            Text(
+                                if (e.averageMatches > RANDOM_AVERAGE_MATCHES)
+                                    "平均一致はランダム基準を上回っています。"
+                                else
+                                    "平均一致はランダム基準以下です。"
+                            )'''
+          if 'AI vs 完全ランダム' not in s:
+              if needle not in s:
+                  raise SystemExit('Could not find backtest comparison insertion point')
+              s = s.replace(needle, replacement)
           p.write_text(s, encoding='utf-8')
           PY
 
