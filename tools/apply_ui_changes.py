@@ -83,57 +83,59 @@ new = '''        val recentWindow = sorted.takeLast(52)
 if old not in s: raise SystemExit('score insertion point not found')
 s = s.replace(old, new, 1)
 
-# Replace training with iterative bounded search. It prioritizes any historical 7/7 hit,
-# but is deliberately capped so impossible/noisy data cannot freeze the Android app forever.
 ts = s.find('private fun trainModel(name: String, draws: List<Draw>): SavedModelEntity {')
 te = s.find('\nprivate fun predictCandidates(', ts)
 if ts < 0 or te < 0: raise SystemExit('training block not found')
 training = '''private fun trainModel(name: String, draws: List<Draw>): SavedModelEntity {
     val sorted = draws.sortedBy { it.date }
+    if (sorted.size < 20) return SavedModelEntity(name = name, modelType = MODEL_TYPE_RECENCY, lambda = 0.08, recencyBonusWeight = 0.5, trainedAt = LocalDate.now().toString(), active = false)
+
+    // Chronological holdout: older 80% is used for parameter selection; newest 20% is never used for tuning.
+    val splitIndex = (sorted.size * 0.80).toInt().coerceIn(10, sorted.size - 1)
+    val trainingDraws = sorted.take(splitIndex)
+    val validationDraws = sorted.drop(splitIndex)
     var bestLambda = 0.08
     var bestRecency = 0.5
-    var bestSevenHits = -1
-    var bestAverage = Double.NEGATIVE_INFINITY
-    var iteration = 0
-    val maxIterations = 400
+    var bestTrainAverage = Double.NEGATIVE_INFINITY
 
-    // Search progressively finer parameter grids. Stop early if a walk-forward case reaches 7/7.
-    while (iteration < maxIterations) {
+    // Stage 1: tune only on the training partition.
+    for (iteration in 0 until 400) {
         val lambda = 0.005 + (iteration % 40) * 0.0125
         val recency = 0.10 + ((iteration / 40) % 10) * 0.10
-        var totalMatches = 0.0
+        var total = 0.0
         var cases = 0
-        var sevenHits = 0
-        for (i in 1 until sorted.size) {
-            val target = sorted[i]
-            val window = sorted.take(i).takeLast(52)
+        for (i in 1 until trainingDraws.size) {
+            val target = trainingDraws[i]
+            val window = trainingDraws.take(i).takeLast(52)
             if (window.isEmpty()) continue
-            val predicted = scoreNumbers(window, lambda, recency).entries
-                .sortedByDescending { it.value }.take(7).map { it.key }.toSet()
-            val matches = predicted.intersect(target.numbers.toSet()).size
-            totalMatches += matches
+            val predicted = scoreNumbers(window, lambda, recency).entries.sortedByDescending { it.value }.take(7).map { it.key }.toSet()
+            total += predicted.intersect(target.numbers.toSet()).size
             cases++
-            if (matches == 7) sevenHits++
         }
-        val average = if (cases == 0) 0.0 else totalMatches / cases
-        if (sevenHits > bestSevenHits || (sevenHits == bestSevenHits && average > bestAverage)) {
-            bestSevenHits = sevenHits
-            bestAverage = average
-            bestLambda = lambda
-            bestRecency = recency
-        }
-        if (sevenHits > 0) break
-        iteration++
+        val average = if (cases == 0) 0.0 else total / cases
+        if (average > bestTrainAverage) { bestTrainAverage = average; bestLambda = lambda; bestRecency = recency }
     }
 
-    return SavedModelEntity(
-        name = name,
-        modelType = MODEL_TYPE_RECENCY,
-        lambda = bestLambda,
-        recencyBonusWeight = bestRecency,
-        trainedAt = LocalDate.now().toString(),
-        active = false
-    )
+    // Stage 2: genuine walk-forward holdout check. Parameters are frozen here.
+    var validationTotal = 0.0
+    var validationCases = 0
+    var validationSevenHits = 0
+    for (offset in validationDraws.indices) {
+        val targetIndex = splitIndex + offset
+        val target = sorted[targetIndex]
+        val window = sorted.take(targetIndex).takeLast(52)
+        if (window.isEmpty()) continue
+        val predicted = scoreNumbers(window, bestLambda, bestRecency).entries.sortedByDescending { it.value }.take(7).map { it.key }.toSet()
+        val matches = predicted.intersect(target.numbers.toSet()).size
+        validationTotal += matches
+        validationCases++
+        if (matches == 7) validationSevenHits++
+    }
+    val validationAverage = if (validationCases == 0) 0.0 else validationTotal / validationCases
+    // Keep the holdout metrics visible in logcat without feeding them back into tuning.
+    println("Holdout validation: cases=$validationCases average=$validationAverage sevenHits=$validationSevenHits")
+
+    return SavedModelEntity(name = name, modelType = MODEL_TYPE_RECENCY, lambda = bestLambda, recencyBonusWeight = bestRecency, trainedAt = LocalDate.now().toString(), active = false)
 }
 '''
 s = s[:ts] + training + s[te:]
@@ -150,4 +152,4 @@ section = '''                Text("登録済みデータ", style = MaterialTheme
                 if (visibleDrawCount > 100) TextButton(onClick = { visibleDrawCount = 100 }) { Text("100件表示に戻す") }'''
 s = s[:rs] + section + s[le + len('\n                }'):]
 p.write_text(s, encoding='utf-8')
-print('Applied bounded iterative training targeting historical 7/7 matches')
+print('Applied chronological 80/20 holdout model training and validation')
