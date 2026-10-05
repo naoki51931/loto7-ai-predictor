@@ -50,21 +50,31 @@ generator = '''private fun generateCandidatesFromScores(scores: Map<Int, Double>
     for (ticket in 0 until wanted) {
         val anchor = ranked[(ticket * 3) % minOf(15, ranked.size)]
         val candidate = mutableListOf(anchor)
-        val nearby = ranked.filter { it != anchor && abs(it - anchor) <= 5 }
-            .sortedBy { n -> abs(n - anchor) * 0.70 - (scores[n] ?: 0.0) * 0.30 }
 
-        // Every ticket is pair-first: one anchor plus one nearby high-score number.
-        for (n in nearby) {
-            if (candidate.size >= 2) break
-            if (n !in candidate) candidate += n
+        // Fractional cluster tuning: adjacent gap=1 gets 2.0 weight, one-number gap=2 gets 1.5.
+        // Wider gaps are allowed with gradually smaller weights instead of a hard pair-only rule.
+        fun spacingWeight(n: Int): Double = when (abs(n - anchor)) {
+            1 -> 2.0
+            2 -> 1.5
+            3 -> 1.0
+            4 -> 0.65
+            5 -> 0.35
+            else -> 0.0
         }
+        val nearby = ranked.filter { it != anchor && abs(it - anchor) <= 5 }
+            .sortedByDescending { n -> (scores[n] ?: 0.0) + spacingWeight(n) }
 
-        // Fill remaining positions from high-score numbers and avoid forcing a triple cluster.
+        // Select the best companion; it may be adjacent or one number apart (fractional 1.5 pattern).
+        nearby.firstOrNull()?.let { candidate += it }
+
+        // Fill from high-score numbers. Penalize a forced three-number tight cluster, but do not ban it.
         for (n in ranked.drop(ticket)) {
             if (candidate.size >= 7) break
             if (n in candidate) continue
-            val wouldMakeTriple = candidate.count { abs(it - n) <= 2 } >= 2
-            if (!wouldMakeTriple || candidate.size >= 6) candidate += n
+            val tightNeighbours = candidate.count { abs(it - n) <= 2 }
+            val acceptance = (scores[n] ?: 0.0) - if (tightNeighbours >= 2) 0.35 else 0.0
+            val fallback = ranked.getOrNull(6)?.let { scores[it] ?: 0.0 } ?: 0.0
+            if (acceptance >= fallback - 0.45 || candidate.size >= 5) candidate += n
         }
         for (n in ranked) {
             if (candidate.size >= 7) break
@@ -80,14 +90,23 @@ s = s[:start] + generator + s[end:]
 old = '''        scores[n] = score + recencyBonus * recencyBonusWeight
 '''
 new = '''        val recentWindow = sorted.takeLast(52)
-        var neighborHits = 0.0
-        var pairStrength = 0.0
+        var weightedSpacing = 0.0
         for (draw in recentWindow) {
-            if (n in draw.numbers) neighborHits += draw.numbers.count { other -> other != n && abs(other - n) <= 4 }
-            pairStrength += draw.numbers.count { other -> abs(other - n) <= 2 }.toDouble() * 0.02
+            if (n !in draw.numbers) continue
+            for (other in draw.numbers) {
+                if (other == n) continue
+                weightedSpacing += when (abs(other - n)) {
+                    1 -> 2.0
+                    2 -> 1.5
+                    3 -> 1.0
+                    4 -> 0.65
+                    5 -> 0.35
+                    else -> 0.0
+                }
+            }
         }
-        val clusterBonus = if (recentWindow.isEmpty()) 0.0 else neighborHits / recentWindow.size * 0.22
-        scores[n] = score + recencyBonus * recencyBonusWeight + clusterBonus + pairStrength
+        val spacingBonus = if (recentWindow.isEmpty()) 0.0 else weightedSpacing / recentWindow.size * 0.12
+        scores[n] = score + recencyBonus * recencyBonusWeight + spacingBonus
 '''
 if old not in s: raise SystemExit('score insertion point not found')
 s = s.replace(old, new, 1)
@@ -106,4 +125,4 @@ section = '''                Text("登録済みデータ", style = MaterialTheme
                 if (visibleDrawCount > 100) TextButton(onClick = { visibleDrawCount = 100 }) { Text("100件表示に戻す") }'''
 s = s[:rs] + section + s[le + len('\n                }'):]
 p.write_text(s, encoding='utf-8')
-print('Applied pair-first prediction model to all tickets')
+print('Applied fractional spacing-weight prediction tuning')
