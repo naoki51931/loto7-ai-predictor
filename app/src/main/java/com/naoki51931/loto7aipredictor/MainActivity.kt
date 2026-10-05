@@ -81,8 +81,9 @@ private const val MODEL_TYPE_RECENCY = "RECENCY"
  
 private data class Evaluation(
     val modelName: String, val cases: Int, val averageMatches: Double,
-    val hit2Rate: Double, val hit3Rate: Double, val hit4Rate: Double,
-    val hit5Rate: Double, val hit6Rate: Double, val hit7Rate: Double,
+    val hit1Rate: Double, val hit2Rate: Double, val hit3Rate: Double,
+    val hit4Rate: Double, val hit5Rate: Double, val hit6Rate: Double,
+    val hit7Rate: Double,
     val olderAverage: Double, val recentAverage: Double
 )
 
@@ -99,14 +100,14 @@ private fun evaluateModel(model: SavedModelEntity, draws: List<Draw>): Evaluatio
             .entries.sortedByDescending { it.value }.take(7).map { it.key }.toSet()
         results += predicted.intersect(target.numbers.toSet()).size
     }
-    if (results.isEmpty()) return Evaluation(model.name, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    if (results.isEmpty()) return Evaluation(model.name, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     val mid = (results.size / 2).coerceAtLeast(1)
     val older = results.take(mid)
     val recent = results.drop(mid).ifEmpty { older }
     fun rate(min: Int) = results.count { it >= min }.toDouble() / results.size * 100.0
     return Evaluation(
         model.name, results.size, results.average(),
-        rate(2), rate(3), rate(4), rate(5), rate(6), rate(7),
+        rate(1), rate(2), rate(3), rate(4), rate(5), rate(6), rate(7),
         older.average(), recent.average()
     )
 }
@@ -133,6 +134,7 @@ private fun PredictorScreen(db: LotoDatabase) {
     var scores by remember { mutableStateOf<Map<Int, Double>>(emptyMap()) }
     var message by remember { mutableStateOf("抽選データを追加してください") }
     var training by remember { mutableStateOf(false) }
+    var predictionEvaluation by remember { mutableStateOf<Evaluation?>(null) }
 
     fun refreshModels() {
         scope.launch {
@@ -253,6 +255,7 @@ private fun PredictorScreen(db: LotoDatabase) {
                                 val result = predict(recent, model)
                                 prediction = result.first
                                 scores = result.second
+                                predictionEvaluation = evaluateModel(model, draws)
                                 message = "モデル「${model.name}」 / 使用データ: ${recent.size}回 / ${target.minusDays(14)}〜${target.minusDays(1)}"
                             }.onFailure { message = "予測対象日を確認してください" }
                         }
@@ -264,6 +267,18 @@ private fun PredictorScreen(db: LotoDatabase) {
                     Text("予測数字", style = MaterialTheme.typography.titleLarge)
                     Text(prediction.joinToString("  ") { "%02d".format(it) }, style = MaterialTheme.typography.headlineSmall)
                     Text("選択中のモデルの学習済みパラメータでスコアリングしています。")
+                    predictionEvaluation?.let { e ->
+                        if (e.cases > 0) {
+                            Text("過去バックテストからの推定", style = MaterialTheme.typography.titleMedium)
+                            Text("この7個を1口買った場合の推定当選率: " + "%.2f".format(e.hit4Rate) + "%（4個以上一致）")
+                            Text("参考: 3個以上 " + "%.2f".format(e.hit3Rate) + "% / " +
+                                "5個以上 " + "%.2f".format(e.hit5Rate) + "% / " +
+                                "6個以上 " + "%.2f".format(e.hit6Rate) + "% / " +
+                                "7個一致 " + "%.2f".format(e.hit7Rate) + "%")
+                            Text("バックテスト " + e.cases + "回 / 平均一致 " + "%.2f".format(e.averageMatches) + "個")
+                            Text("※これは未来の当選を保証する確率ではなく、過去データで同じ予測方法を使った場合の実績率です。")
+                        }
+                    }
                     Text("数字別スコア", style = MaterialTheme.typography.titleMedium)
                     prediction.forEach { n -> Text("%02d  %.4f".format(n, scores[n] ?: 0.0)) }
                 }
@@ -280,10 +295,11 @@ private fun PredictorScreen(db: LotoDatabase) {
                         }
                         evaluation?.let { e ->
                             Text(
-                                "${e.modelName}: 平均一致 ${"%.2f".format(e.averageMatches)}個 / " +
-                                    "2個以上 ${"%.1f".format(e.hit2Rate)}% / " +
-                                    "3個以上 ${"%.1f".format(e.hit3Rate)}% / " +
-                                    "4個以上 ${"%.1f".format(e.hit4Rate)}%"
+                                e.modelName + ": 平均一致 " + "%.2f".format(e.averageMatches) + "個 / " +
+                                    "1個以上 " + "%.1f".format(e.hit1Rate) + "% / " +
+                                    "2個以上 " + "%.1f".format(e.hit2Rate) + "% / " +
+                                    "3個以上 " + "%.1f".format(e.hit3Rate) + "% / " +
+                                    "4個以上（推定当選率）" + "%.1f".format(e.hit4Rate) + "%"
                             )
                             Text(
                                 "5個以上 ${"%.1f".format(e.hit5Rate)}% / " +
@@ -300,7 +316,7 @@ private fun PredictorScreen(db: LotoDatabase) {
                         }
                     }
                 }
-                Text("※「正答率」は7個全部一致だけでなく、2個以上〜7個一致率と平均一致数で評価します。")
+                Text("※「推定当選率」は、予測した7個の数字から本数字が4個以上一致した割合です。ボーナス数字は現在のデータに含めていないため、賞金区分そのものの当選率ではありません。")
 
                 Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
                 LazyColumn(
