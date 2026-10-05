@@ -53,20 +53,18 @@ generator = '''private fun generateCandidatesFromScores(scores: Map<Int, Double>
         val nearby = ranked.filter { it != anchor && abs(it - anchor) <= 5 }
             .sortedBy { n -> abs(n - anchor) * 0.70 - (scores[n] ?: 0.0) * 0.30 }
 
-        // Usually make a two-number cluster. Every fifth ticket makes a three-number cluster.
-        // With five displayed tickets this gives four pair-oriented tickets and one triple-oriented ticket.
-        val clusterSize = if (ticket % 5 == 4) 3 else 2
+        // Every ticket is pair-first: one anchor plus one nearby high-score number.
         for (n in nearby) {
-            if (candidate.size >= clusterSize) break
+            if (candidate.size >= 2) break
             if (n !in candidate) candidate += n
         }
 
-        // Fill remaining positions from the strongest numbers, avoiding another tight run.
+        // Fill remaining positions from high-score numbers and avoid forcing a triple cluster.
         for (n in ranked.drop(ticket)) {
             if (candidate.size >= 7) break
             if (n in candidate) continue
-            val wouldExtendCluster = candidate.count { abs(it - n) <= 2 } >= 2
-            if (!wouldExtendCluster || candidate.size >= 6) candidate += n
+            val wouldMakeTriple = candidate.count { abs(it - n) <= 2 } >= 2
+            if (!wouldMakeTriple || candidate.size >= 6) candidate += n
         }
         for (n in ranked) {
             if (candidate.size >= 7) break
@@ -108,4 +106,4 @@ section = '''                Text("登録済みデータ", style = MaterialTheme
                 if (visibleDrawCount > 100) TextButton(onClick = { visibleDrawCount = 100 }) { Text("100件表示に戻す") }'''
 s = s[:rs] + section + s[le + len('\n                }'):]
 p.write_text(s, encoding='utf-8')
-print('Applied pair-first and occasional-triple prediction model')
+print('Applied pair-first prediction model to all tickets')
