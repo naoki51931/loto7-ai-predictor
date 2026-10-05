@@ -55,37 +55,29 @@ jobs:
           print(f'Bundled {len(rows)} Loto7 draws, rounds {rows[0][0]}-{rows[-1][0]}')
           PY
 
-      - name: Apply scrolling fix
+      - name: Apply UI fixes and 100 item paging
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
           s = p.read_text(encoding='utf-8')
+
           layout_import = 'import androidx.compose.foundation.layout.*\n'
           if 'import androidx.compose.foundation.rememberScrollState' not in s:
               s = s.replace(layout_import, layout_import + 'import androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.verticalScroll\n', 1)
-          old_root = 'Modifier.fillMaxSize().padding(padding).padding(16.dp),'
-          new_root = 'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),'
-          if old_root in s:
-              s = s.replace(old_root, new_root, 1)
-          elif new_root not in s:
-              raise SystemExit('Root screen modifier not found')
-          old_list = 'modifier = Modifier.fillMaxWidth().weight(1f),'
-          new_list = 'modifier = Modifier.fillMaxWidth().height(420.dp),'
-          if old_list in s:
-              s = s.replace(old_list, new_list, 1)
-          elif new_list not in s:
-              raise SystemExit('Registered-data list modifier not found')
-          p.write_text(s, encoding='utf-8')
-          PY
+          s = s.replace(
+              'Modifier.fillMaxSize().padding(padding).padding(16.dp),',
+              'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),',
+              1
+          )
 
-      - name: Stack winning and predicted numbers
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
-          s = p.read_text(encoding='utf-8')
-          old = '''                    draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
+          state = '    var predictionEvaluation by remember { mutableStateOf<Evaluation?>(null) }\n'
+          if 'var visibleDrawCount by remember' not in s:
+              if state not in s:
+                  raise SystemExit('State insertion point not found')
+              s = s.replace(state, state + '    var visibleDrawCount by remember { mutableStateOf(100) }\n', 1)
+
+          old_prediction = '''                    draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
                         Text("当選数字", style = MaterialTheme.typography.titleLarge)
                         NumberBalls(actual.numbers, 48.dp)
                         Text("※本数字7個。ボーナス数字は含めていません。", style = MaterialTheme.typography.bodySmall)
@@ -99,13 +91,12 @@ jobs:
                             NumberBalls(numbers, if (index == 0) 48.dp else 42.dp)
                         }
                     }'''
-          new = '''                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          new_prediction = '''                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
                             Text("当選数字", style = MaterialTheme.typography.titleLarge)
                             NumberBalls(actual.numbers, 42.dp)
                             Text("※本数字7個。ボーナス数字は含めていません。", style = MaterialTheme.typography.bodySmall)
                         }
-
                         Text("予測数字", style = MaterialTheme.typography.titleLarge)
                         predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -114,35 +105,25 @@ jobs:
                             }
                         }
                     }'''
-          if old in s:
-              s = s.replace(old, new, 1)
-          p.write_text(s, encoding='utf-8')
-          PY
+          if old_prediction in s:
+              s = s.replace(old_prediction, new_prediction, 1)
 
-      - name: Paginate registered draw data
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
-          s = p.read_text(encoding='utf-8')
-          state = '    var predictionEvaluation by remember { mutableStateOf<Evaluation?>(null) }\n'
-          if 'var visibleDrawCount by remember' not in s:
-              if state not in s:
-                  raise SystemExit('State insertion point not found')
-              s = s.replace(state, state + '    var visibleDrawCount by remember { mutableStateOf(100) }\n', 1)
-          old = '''                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(draws.reversed()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(it.date.toString(), style = MaterialTheme.typography.titleSmall)
-                            NumberBalls(it.numbers, 38.dp)
-                        }
-                    }
-                }'''
-          new = '''                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
+          marker = '                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)\n'
+          start = s.find(marker)
+          if start < 0:
+              raise SystemExit('Registered data marker not found')
+          tail = s[start:]
+          list_start = tail.find('                LazyColumn(')
+          if list_start < 0:
+              raise SystemExit('Registered data LazyColumn not found')
+          abs_list_start = start + list_start
+          # Find the exact old list ending immediately before the screen-closing braces.
+          closing = '\n                }\n            }\n        }\n    }\n}\n\nprivate fun trainModel'
+          end = s.find(closing, abs_list_start)
+          if end < 0:
+              raise SystemExit('Registered data list end not found')
+          old_section = s[start:end + len('\n                }')]
+          new_section = '''                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
                 Text("${minOf(visibleDrawCount, draws.size)} / ${draws.size}件を表示（100件単位）", style = MaterialTheme.typography.bodySmall)
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().height(420.dp),
@@ -165,14 +146,7 @@ jobs:
                         Text("100件表示に戻す")
                     }
                 }'''
-          if old in s:
-              s = s.replace(old, new, 1)
-          else:
-              # scrolling step has already converted the modifier in the working copy
-              old2 = old.replace('Modifier.fillMaxWidth().weight(1f)', 'Modifier.fillMaxWidth().height(420.dp)')
-              if old2 not in s:
-                  raise SystemExit('Registered draw list block not found')
-              s = s.replace(old2, new, 1)
+          s = s[:start] + new_section + s[start + len(old_section):]
           p.write_text(s, encoding='utf-8')
           PY
 
