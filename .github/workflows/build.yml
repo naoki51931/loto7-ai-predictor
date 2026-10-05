@@ -2,7 +2,8 @@ name: Android Build
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,7 +12,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,97 +31,10 @@ jobs:
         run: |
           mkdir -p app/src/main/assets
           curl --fail --location --retry 3 https://raw.githubusercontent.com/tk030-lotto/lotto-data-hub/main/data/loto7.json -o /tmp/loto7.json
-          python3 - <<'PY'
-          import csv, json
-          from pathlib import Path
-          data = json.load(open('/tmp/loto7.json', encoding='utf-8'))
-          rows = []
-          for d in data:
-              nums = d.get('numbers', [])
-              if len(nums) == 7 and len(set(nums)) == 7 and all(1 <= int(n) <= 37 for n in nums):
-                  rows.append([int(d['round']), d['date'], *map(int, nums)])
-          rows.sort(key=lambda r: r[0])
-          if len(rows) < 600: raise SystemExit(f'Incomplete history: {len(rows)}')
-          out = Path('app/src/main/assets/loto7.csv')
-          with out.open('w', encoding='utf-8', newline='') as f:
-              w = csv.writer(f); w.writerow(['round','date','n1','n2','n3','n4','n5','n6','n7']); w.writerows(rows)
-          PY
+          python3 tools/prepare_history.py
 
-      - name: Apply UI fixes
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
-          s = p.read_text(encoding='utf-8')
-          if 'import androidx.compose.foundation.rememberScrollState' not in s:
-              s = s.replace('import androidx.compose.foundation.layout.*\n', 'import androidx.compose.foundation.layout.*\nimport androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.verticalScroll\n', 1)
-          s = s.replace('Modifier.fillMaxSize().padding(padding).padding(16.dp),', 'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),', 1)
-          state = '    var predictionEvaluation by remember { mutableStateOf<Evaluation?>(null) }\n'
-          if 'var visibleDrawCount by remember' not in s:
-              s = s.replace(state, state + '    var visibleDrawCount by remember { mutableStateOf(100) }\n', 1)
-
-          a = s.index('                    draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->')
-          b = s.index('                    Text("各口は同じ7数字セットにならないように候補を分散しています。")', a)
-          display = '''                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
-                            Text("当選数字", style = MaterialTheme.typography.titleLarge)
-                            NumberBalls(actual.numbers, 40.dp)
-                        }
-                        Text("予測数字 ${selectedTicketCount}口", style = MaterialTheme.typography.titleLarge)
-                        predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
-                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text("${index + 1}口目", style = MaterialTheme.typography.titleMedium)
-                                NumberBalls(numbers, 40.dp)
-                            }
-                        }
-                    }
-'''
-          s = s[:a] + display + s[b:]
-
-          # Always create exactly five distinct ticket candidates when enough scores exist.
-          start = s.index('private fun generateCandidatesFromScores(')
-          end = s.index('\nprivate fun calculateMultiTicketRate(', start)
-          generator = '''private fun generateCandidatesFromScores(scores: Map<Int, Double>, count: Int): List<List<Int>> {
-    val ranked = scores.entries.sortedByDescending { it.value }.map { it.key }
-    if (ranked.size < 11) return if (ranked.size >= 7) listOf(ranked.take(7).sorted()) else emptyList()
-    val wanted = count.coerceIn(1, 5)
-    val result = mutableListOf<List<Int>>()
-    for (ticket in 0 until wanted) {
-        val candidate = mutableListOf<Int>()
-        for (i in 0 until 7) {
-            var pos = (i + ticket * 2) % ranked.size
-            while (ranked[pos] in candidate) pos = (pos + 1) % ranked.size
-            candidate += ranked[pos]
-        }
-        result += candidate.sorted()
-    }
-    return result
-}
-'''
-          s = s[:start] + generator + s[end:]
-
-          marker = '                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)\n'
-          rs = s.index(marker)
-          le = s.index('\n                }\n            }\n        }\n    }\n}\n\nprivate fun trainModel', rs)
-          section = '''                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
-                Text("${minOf(visibleDrawCount, draws.size)} / ${draws.size}件を表示（100件単位）", style = MaterialTheme.typography.bodySmall)
-                LazyColumn(modifier = Modifier.fillMaxWidth().height(420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(draws.asReversed().take(visibleDrawCount)) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(it.date.toString(), style = MaterialTheme.typography.titleSmall)
-                            NumberBalls(it.numbers, 38.dp)
-                        }
-                    }
-                }
-                if (visibleDrawCount < draws.size) {
-                    OutlinedButton(onClick = { visibleDrawCount = minOf(visibleDrawCount + 100, draws.size) }) { Text("次の100件をロード") }
-                }
-                if (visibleDrawCount > 100) {
-                    TextButton(onClick = { visibleDrawCount = 100 }) { Text("100件表示に戻す") }
-                }'''
-          s = s[:rs] + section + s[le + len('\n                }'):]
-          p.write_text(s, encoding='utf-8')
-          PY
+      - name: Apply requested UI changes
+        run: python3 tools/apply_ui_changes.py
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
