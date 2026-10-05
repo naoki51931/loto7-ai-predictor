@@ -79,6 +79,47 @@ jobs:
           p.write_text(s, encoding='utf-8')
           PY
 
+      - name: Stack winning and predicted numbers
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+          old = '''                    draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
+                        Text("当選数字", style = MaterialTheme.typography.titleLarge)
+                        NumberBalls(actual.numbers, 48.dp)
+                        Text("※本数字7個。ボーナス数字は含めていません。", style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    Text("予測数字", style = MaterialTheme.typography.titleLarge)
+                    predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("${index + 1}口目", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.width(8.dp))
+                            NumberBalls(numbers, if (index == 0) 48.dp else 42.dp)
+                        }
+                    }'''
+          new = '''                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
+                            Text("当選数字", style = MaterialTheme.typography.titleLarge)
+                            NumberBalls(actual.numbers, 42.dp)
+                            Text("※本数字7個。ボーナス数字は含めていません。", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        Text("予測数字", style = MaterialTheme.typography.titleLarge)
+                        predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("${index + 1}口目", style = MaterialTheme.typography.titleMedium)
+                                NumberBalls(numbers, 42.dp)
+                            }
+                        }
+                    }'''
+          if old not in s:
+              raise SystemExit('Winning/prediction display block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
 
