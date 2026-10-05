@@ -237,7 +237,7 @@ private fun PredictorScreen(db: LotoDatabase) {
                     }
                     selectedModel?.let {
                         Text(
-                            "λ=${${"%.3f".format(it.lambda)}} / bonus=${${"%.2f".format(it.recencyBonusWeight)}} / 学習=${it.trainedAt}",
+                            "λ=${"%.3f".format(it.lambda)} / bonus=${"%.2f".format(it.recencyBonusWeight)} / 学習=${it.trainedAt}",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
