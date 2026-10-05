@@ -1,5 +1,8 @@
 package com.naoki51931.loto7aipredictor
 
+import android.content.Context
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import kotlin.math.exp
 import kotlin.math.sqrt
 import kotlin.random.Random
@@ -18,4 +21,13 @@ class LotoNeuralNetwork(private val inputSize:Int=37,private val hidden1:Int=256
  fun restore(s:NeuralNetworkSnapshot){for(i in w1.indices)s.w1.getOrNull(i)?.copyInto(w1[i]);s.b1.copyInto(b1);for(i in w2.indices)s.w2.getOrNull(i)?.copyInto(w2[i]);s.b2.copyInto(b2);for(i in w3.indices)s.w3.getOrNull(i)?.copyInto(w3[i]);s.b3.copyInto(b3)}
 }
 
-object NeuralModelStore{private val models=mutableMapOf<String,NeuralNetworkSnapshot>();@Synchronized fun put(name:String,s:NeuralNetworkSnapshot){models[name]=s};@Synchronized fun get(name:String)=models[name]}
+object NeuralModelStore{
+ private val models=mutableMapOf<String,NeuralNetworkSnapshot>()
+ private fun safe(name:String)=name.replace(Regex("[^A-Za-z0-9._-]"),"_")
+ private fun writeVector(out:DataOutputStream,v:DoubleArray){out.writeInt(v.size);v.forEach(out::writeDouble)}
+ private fun writeMatrix(out:DataOutputStream,m:Array<DoubleArray>){out.writeInt(m.size);m.forEach{writeVector(out,it)}}
+ private fun readVector(input:DataInputStream)=DoubleArray(input.readInt()){input.readDouble()}
+ private fun readMatrix(input:DataInputStream)=Array(input.readInt()){readVector(input)}
+ @Synchronized fun put(context:Context,name:String,s:NeuralNetworkSnapshot){models[name]=s;DataOutputStream(context.openFileOutput("nn_${safe(name)}.bin",Context.MODE_PRIVATE).buffered()).use{out->out.writeInt(1);writeMatrix(out,s.w1);writeVector(out,s.b1);writeMatrix(out,s.w2);writeVector(out,s.b2);writeMatrix(out,s.w3);writeVector(out,s.b3)}}
+ @Synchronized fun get(context:Context,name:String):NeuralNetworkSnapshot?{models[name]?.let{return it};return runCatching{DataInputStream(context.openFileInput("nn_${safe(name)}.bin").buffered()).use{input->if(input.readInt()!=1)return@use null;NeuralNetworkSnapshot(readMatrix(input),readVector(input),readMatrix(input),readVector(input),readMatrix(input),readVector(input))}}.getOrNull()?.also{models[name]=it}}
+}
