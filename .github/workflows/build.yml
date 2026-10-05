@@ -30,105 +30,82 @@ jobs:
       - name: Bundle Loto7 history
         run: |
           mkdir -p app/src/main/assets
-          curl --fail --location --retry 3 \
-            https://raw.githubusercontent.com/tk030-lotto/lotto-data-hub/main/data/loto7.json \
-            -o /tmp/loto7.json
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tk030-lotto/lotto-data-hub/main/data/loto7.json -o /tmp/loto7.json
           python3 - <<'PY'
           import csv, json
           from pathlib import Path
-          with open('/tmp/loto7.json', encoding='utf-8') as f:
-              data = json.load(f)
+          data = json.load(open('/tmp/loto7.json', encoding='utf-8'))
           rows = []
           for d in data:
               nums = d.get('numbers', [])
-              if len(nums) != 7 or len(set(nums)) != 7 or not all(1 <= int(n) <= 37 for n in nums):
-                  continue
-              rows.append([int(d['round']), d['date'], *map(int, nums)])
+              if len(nums) == 7 and len(set(nums)) == 7 and all(1 <= int(n) <= 37 for n in nums):
+                  rows.append([int(d['round']), d['date'], *map(int, nums)])
           rows.sort(key=lambda r: r[0])
-          if len(rows) < 600:
-              raise SystemExit(f'Incomplete Loto7 history: {len(rows)} rows')
+          if len(rows) < 600: raise SystemExit(f'Incomplete history: {len(rows)}')
           out = Path('app/src/main/assets/loto7.csv')
           with out.open('w', encoding='utf-8', newline='') as f:
-              w = csv.writer(f)
-              w.writerow(['round','date','n1','n2','n3','n4','n5','n6','n7'])
-              w.writerows(rows)
-          print(f'Bundled {len(rows)} Loto7 draws, rounds {rows[0][0]}-{rows[-1][0]}')
+              w = csv.writer(f); w.writerow(['round','date','n1','n2','n3','n4','n5','n6','n7']); w.writerows(rows)
           PY
 
-      - name: Apply UI fixes and 100 item paging
+      - name: Apply UI fixes
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
           s = p.read_text(encoding='utf-8')
-
-          layout_import = 'import androidx.compose.foundation.layout.*\n'
           if 'import androidx.compose.foundation.rememberScrollState' not in s:
-              s = s.replace(layout_import, layout_import + 'import androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.verticalScroll\n', 1)
-          s = s.replace(
-              'Modifier.fillMaxSize().padding(padding).padding(16.dp),',
-              'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),',
-              1
-          )
-
+              s = s.replace('import androidx.compose.foundation.layout.*\n', 'import androidx.compose.foundation.layout.*\nimport androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.verticalScroll\n', 1)
+          s = s.replace('Modifier.fillMaxSize().padding(padding).padding(16.dp),', 'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),', 1)
           state = '    var predictionEvaluation by remember { mutableStateOf<Evaluation?>(null) }\n'
           if 'var visibleDrawCount by remember' not in s:
-              if state not in s:
-                  raise SystemExit('State insertion point not found')
               s = s.replace(state, state + '    var visibleDrawCount by remember { mutableStateOf(100) }\n', 1)
 
-          old_prediction = '''                    draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
-                        Text("当選数字", style = MaterialTheme.typography.titleLarge)
-                        NumberBalls(actual.numbers, 48.dp)
-                        Text("※本数字7個。ボーナス数字は含めていません。", style = MaterialTheme.typography.bodySmall)
-                    }
-
-                    Text("予測数字", style = MaterialTheme.typography.titleLarge)
-                    predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("${index + 1}口目", style = MaterialTheme.typography.titleMedium)
-                            Spacer(Modifier.width(8.dp))
-                            NumberBalls(numbers, if (index == 0) 48.dp else 42.dp)
-                        }
-                    }'''
-          new_prediction = '''                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          a = s.index('                    draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->')
+          b = s.index('                    Text("各口は同じ7数字セットにならないように候補を分散しています。")', a)
+          display = '''                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         draws.firstOrNull { it.date.toString() == targetDate }?.let { actual ->
                             Text("当選数字", style = MaterialTheme.typography.titleLarge)
-                            NumberBalls(actual.numbers, 42.dp)
-                            Text("※本数字7個。ボーナス数字は含めていません。", style = MaterialTheme.typography.bodySmall)
+                            NumberBalls(actual.numbers, 40.dp)
                         }
-                        Text("予測数字", style = MaterialTheme.typography.titleLarge)
+                        Text("予測数字 ${selectedTicketCount}口", style = MaterialTheme.typography.titleLarge)
                         predictionCandidates.take(selectedTicketCount).forEachIndexed { index, numbers ->
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text("${index + 1}口目", style = MaterialTheme.typography.titleMedium)
-                                NumberBalls(numbers, 42.dp)
+                                NumberBalls(numbers, 40.dp)
                             }
                         }
-                    }'''
-          if old_prediction in s:
-              s = s.replace(old_prediction, new_prediction, 1)
+                    }
+'''
+          s = s[:a] + display + s[b:]
+
+          # Always create exactly five distinct ticket candidates when enough scores exist.
+          start = s.index('private fun generateCandidatesFromScores(')
+          end = s.index('\nprivate fun calculateMultiTicketRate(', start)
+          generator = '''private fun generateCandidatesFromScores(scores: Map<Int, Double>, count: Int): List<List<Int>> {
+    val ranked = scores.entries.sortedByDescending { it.value }.map { it.key }
+    if (ranked.size < 11) return if (ranked.size >= 7) listOf(ranked.take(7).sorted()) else emptyList()
+    val wanted = count.coerceIn(1, 5)
+    val result = mutableListOf<List<Int>>()
+    for (ticket in 0 until wanted) {
+        val candidate = mutableListOf<Int>()
+        for (i in 0 until 7) {
+            var pos = (i + ticket * 2) % ranked.size
+            while (ranked[pos] in candidate) pos = (pos + 1) % ranked.size
+            candidate += ranked[pos]
+        }
+        result += candidate.sorted()
+    }
+    return result
+}
+'''
+          s = s[:start] + generator + s[end:]
 
           marker = '                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)\n'
-          start = s.find(marker)
-          if start < 0:
-              raise SystemExit('Registered data marker not found')
-          tail = s[start:]
-          list_start = tail.find('                LazyColumn(')
-          if list_start < 0:
-              raise SystemExit('Registered data LazyColumn not found')
-          abs_list_start = start + list_start
-          # Find the exact old list ending immediately before the screen-closing braces.
-          closing = '\n                }\n            }\n        }\n    }\n}\n\nprivate fun trainModel'
-          end = s.find(closing, abs_list_start)
-          if end < 0:
-              raise SystemExit('Registered data list end not found')
-          old_section = s[start:end + len('\n                }')]
-          new_section = '''                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
+          rs = s.index(marker)
+          le = s.index('\n                }\n            }\n        }\n    }\n}\n\nprivate fun trainModel', rs)
+          section = '''                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
                 Text("${minOf(visibleDrawCount, draws.size)} / ${draws.size}件を表示（100件単位）", style = MaterialTheme.typography.bodySmall)
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().height(420.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                LazyColumn(modifier = Modifier.fillMaxWidth().height(420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(draws.asReversed().take(visibleDrawCount)) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(it.date.toString(), style = MaterialTheme.typography.titleSmall)
@@ -137,16 +114,12 @@ jobs:
                     }
                 }
                 if (visibleDrawCount < draws.size) {
-                    OutlinedButton(onClick = { visibleDrawCount = minOf(visibleDrawCount + 100, draws.size) }) {
-                        Text("次の100件をロード")
-                    }
+                    OutlinedButton(onClick = { visibleDrawCount = minOf(visibleDrawCount + 100, draws.size) }) { Text("次の100件をロード") }
                 }
                 if (visibleDrawCount > 100) {
-                    TextButton(onClick = { visibleDrawCount = 100 }) {
-                        Text("100件表示に戻す")
-                    }
+                    TextButton(onClick = { visibleDrawCount = 100 }) { Text("100件表示に戻す") }
                 }'''
-          s = s[:start] + new_section + s[start + len(old_section):]
+          s = s[:rs] + section + s[le + len('\n                }'):]
           p.write_text(s, encoding='utf-8')
           PY
 
@@ -172,7 +145,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" loto7-ai-predictor.apk --clobber
           else
-            gh release create "$TAG" loto7-ai-predictor.apk \
-              --title "$TITLE" \
-              --notes "Latest Android debug APK built automatically from the main branch."
+            gh release create "$TAG" loto7-ai-predictor.apk --title "$TITLE" --notes "Latest Android debug APK built automatically from the main branch."
           fi
