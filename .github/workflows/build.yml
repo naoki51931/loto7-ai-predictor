@@ -27,8 +27,8 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Bundle official Loto7 history
-        run: python3 tools/fetch_loto7.py
+      - name: Check bundled Loto7 history
+        run: test -s app/src/main/assets/loto7_history.csv
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
