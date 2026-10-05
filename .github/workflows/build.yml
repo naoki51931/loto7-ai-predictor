@@ -55,6 +55,30 @@ jobs:
           print(f'Bundled {len(rows)} Loto7 draws, rounds {rows[0][0]}-{rows[-1][0]}')
           PY
 
+      - name: Apply scrolling fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+          layout_import = 'import androidx.compose.foundation.layout.*\n'
+          if 'import androidx.compose.foundation.rememberScrollState' not in s:
+              s = s.replace(layout_import, layout_import + 'import androidx.compose.foundation.rememberScrollState\nimport androidx.compose.foundation.verticalScroll\n', 1)
+          old_root = 'Modifier.fillMaxSize().padding(padding).padding(16.dp),'
+          new_root = 'Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),'
+          if old_root in s:
+              s = s.replace(old_root, new_root, 1)
+          elif new_root not in s:
+              raise SystemExit('Root screen modifier not found')
+          old_list = 'modifier = Modifier.fillMaxWidth().weight(1f),'
+          new_list = 'modifier = Modifier.fillMaxWidth().height(420.dp),'
+          if old_list in s:
+              s = s.replace(old_list, new_list, 1)
+          elif new_list not in s:
+              raise SystemExit('Registered-data list modifier not found')
+          p.write_text(s, encoding='utf-8')
+          PY
+
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
 
