@@ -114,9 +114,65 @@ jobs:
                             }
                         }
                     }'''
-          if old not in s:
-              raise SystemExit('Winning/prediction display block not found')
-          s = s.replace(old, new, 1)
+          if old in s:
+              s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Paginate registered draw data
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/naoki51931/loto7aipredictor/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+          state = '    var predictionEvaluation by remember { mutableStateOf<Evaluation?>(null) }\n'
+          if 'var visibleDrawCount by remember' not in s:
+              if state not in s:
+                  raise SystemExit('State insertion point not found')
+              s = s.replace(state, state + '    var visibleDrawCount by remember { mutableStateOf(100) }\n', 1)
+          old = '''                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(draws.reversed()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(it.date.toString(), style = MaterialTheme.typography.titleSmall)
+                            NumberBalls(it.numbers, 38.dp)
+                        }
+                    }
+                }'''
+          new = '''                Text("登録済みデータ", style = MaterialTheme.typography.titleMedium)
+                Text("${minOf(visibleDrawCount, draws.size)} / ${draws.size}件を表示（100件単位）", style = MaterialTheme.typography.bodySmall)
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().height(420.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(draws.asReversed().take(visibleDrawCount)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(it.date.toString(), style = MaterialTheme.typography.titleSmall)
+                            NumberBalls(it.numbers, 38.dp)
+                        }
+                    }
+                }
+                if (visibleDrawCount < draws.size) {
+                    OutlinedButton(onClick = { visibleDrawCount = minOf(visibleDrawCount + 100, draws.size) }) {
+                        Text("次の100件をロード")
+                    }
+                }
+                if (visibleDrawCount > 100) {
+                    TextButton(onClick = { visibleDrawCount = 100 }) {
+                        Text("100件表示に戻す")
+                    }
+                }'''
+          if old in s:
+              s = s.replace(old, new, 1)
+          else:
+              # scrolling step has already converted the modifier in the working copy
+              old2 = old.replace('Modifier.fillMaxWidth().weight(1f)', 'Modifier.fillMaxWidth().height(420.dp)')
+              if old2 not in s:
+                  raise SystemExit('Registered draw list block not found')
+              s = s.replace(old2, new, 1)
           p.write_text(s, encoding='utf-8')
           PY
 
