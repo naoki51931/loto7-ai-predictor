@@ -2,6 +2,8 @@
     <application
         android:theme="@style/Theme.Loto7AiPredictor"
         android:label="Loto7 AI Predictor"
+        android:icon="@drawable/loto7_ai_predictor_icon_500"
+        android:roundIcon="@drawable/loto7_ai_predictor_icon_500"
         android:allowBackup="true">
         <activity
             android:name=".MainActivity"
