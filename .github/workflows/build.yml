@@ -28,7 +28,7 @@ jobs:
           gradle-version: '8.9'
 
       - name: Check bundled Loto7 history
-        run: test -s app/src/main/assets/loto7_history.csv
+        run: test -s app/src/main/assets/loto7.csv
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
