@@ -70,3 +70,23 @@ if needle in s and '直近5回だけで予測' not in s:
 ''';s=s.replace(needle,needle+'\n'+insert,1)
 
 p.write_text(s,encoding='utf-8');print('Removed consecutive-number cluster bias')
+
+# Online sync: initialize recurring worker, and offer an explicit refresh beside data entry.
+s=s.replace('        setContent { PredictorScreen(LotoDatabase.get(this)) }','        Loto7OnlineSync.schedule(this)\n        setContent { PredictorScreen(LotoDatabase.get(this)) }',1)
+marker='                    Button(onClick = {\n                        runCatching {\n                            val date = LocalDate.parse(drawDate)'
+if marker not in s: raise SystemExit('data add button not found')
+# Show the refresh button immediately before the existing data-entry button.
+refresh='''                    OutlinedButton(onClick = {
+                        message = "最新抽選結果を確認中..."
+                        scope.launch {
+                            try {
+                                val added = Loto7OnlineSync.sync(context)
+                                draws = db.drawDao().all().map { Draw(LocalDate.parse(it.date), it.numbers()) }
+                                message = if (added > 0) "最新の抽選結果を${added}件追加しました" else "追加データはありません（配信元の更新待ちの場合があります）"
+                            } catch (e: Exception) {
+                                message = "データ取得に失敗しました。通信状態と配信元を確認してください"
+                            }
+                        }
+                    }) { Text("最新データ取得") }
+'''
+s=s.replace(marker,refresh+marker,1)
